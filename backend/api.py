@@ -1,6 +1,6 @@
 import uvicorn
 
-from backend.mano import PromptSmellFixer
+from mano import PromptSmellFixer
 from naso import PromptSmellDetector
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
