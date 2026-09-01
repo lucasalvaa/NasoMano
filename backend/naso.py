@@ -24,7 +24,15 @@ class PromptSmellDetector:
             r"work\s+through\s+this\s+(?:systematically|methodically|step[\s-]by[\s-]step)",
             r"take\s+a\s+deep\s+breath\s+and\s+think",
             r"show\s+your\s+(?:work|working|steps|thought\s+process)",
-            r"think\s+logically\s+and\s+step[\s-]by[\s-]step"
+            r"think\s+logically\s+and\s+step[\s-]by[\s-]step",
+
+            # -- patterns added --
+            r"step[\s-]by[\s-]step",                                   
+            r"explain\s+(?:your|the)\s+(?:reasoning|logic|methodology|thought\s+process)",
+            r"walk\s+(?:me\s+)?through\s+(?:this|the|how|some)",
+            r"break\s*(?:down|this|it)\s+(?:down\s+)?into\s+steps",
+            r"breakdown\s+of\s+(?:the\s+)?steps",
+            r"explain\s+how\s+you\s+(?:arrived|got|reached)",
         ]
         self.cot_regex = re.compile(r"|".join(cot_patterns), re.IGNORECASE | re.DOTALL)
 
@@ -42,6 +50,14 @@ class PromptSmellDetector:
             r"critique\s+(?:your|the)\s+(?:solution|code)",
             r"audit\s+the\s+(?:code|output|solution)",
             r"test\s+(?:your|the)\s+(?:code|solution)\s+for\s+edge\s+cases"
+
+            # -- patterns added --
+            r"(?:review|check)\s+(?:this|my|the)\s+code",
+            r"double[\s-]check\b",
+            r"make\s+sure\s+(?:it|this|that)\s+(?:works|is\s+correct|runs|compiles)",
+            r"ensure\s+(?:that\s+)?(?:this|it)\s+(?:works|is\s+correct|runs)",
+            r"sanity[\s-]check",
+            r"confirm\s+(?:that\s+)?(?:it|this)\s+(?:works|is\s+correct)",
         ]
         self.self_reflection_regex = re.compile(r"|".join(self_reflection_patterns), re.IGNORECASE)
 
@@ -59,6 +75,17 @@ class PromptSmellDetector:
             r"\brole\s*:\s*\w+",
             r"\bpersona\s*:\s*\w+",
             r"\bin\s+your\s+capacity\s+as\b"
+
+            # -- patterns added --
+            r"you'?re\s+(?:a|an)\s+\w+",
+            r"\bin\s+the\s+role\s+of\b",
+            r"\bworking\s+as\s+(?:a|an)\b",
+            r"\b(?:think|act|behave|write|code)\s+like\s+(?:a|an)\s+(?:\w+\s+){0,2}(?:programmer|developer|expert|engineer|scientist|analyst|assistant|professional)\b",
+
+            # -- to avoid fake positive --
+            r"\b(?:acting\s+)?as\s+(?:a|an)\s+(?:\w+\s+){0,2}(?:assistant|expert|developer|engineer|scientist|"
+            r"analyst|consultant|specialist|professional|architect|programmer|coder|designer|"
+            r"writer|tutor|teacher|translator|reviewer|researcher)\b",
         ]
         self.role_regex = re.compile(r"|".join(role_patterns), re.IGNORECASE)
 
@@ -77,6 +104,17 @@ class PromptSmellDetector:
             r"use\s+the\s+following\s+(?:schema|template|format|structure)",
             r"limit\s+(?:the\s+)?output\s+to",
             r"keep\s+(?:your\s+)?response\s+under"
+
+            # -- patterns added --
+            r"\bin\s+json\s+format\b",
+            r"\bjson\s+(?:array|object|string)\b",
+            r"\b(?:in|as)\s+(?:the\s+)?following\s+format\b",
+            r"\bas\s+follows\s*:",
+            r"\brespond\s+in\s+plain\s+text\b",
+            r"\b(?:without|no)\s+(?:any\s+)?markdown\b",
+            r"\bin\s+markdown\b",
+            r"\breturn\s+(?:the\s+)?(?:results?|output|answer|response)\s+in\b",
+            r"\b(?:numbered|bulleted)\s+list\b",
         ]
         self.structure_regex = re.compile(r"|".join(structure_patterns), re.IGNORECASE)
 
@@ -90,6 +128,15 @@ class PromptSmellDetector:
             r"e\.g\.\s*,?",
             r"test\s+case\s*\d*\s*:",
             r"input\s+example\s*:"
+
+            # -- patterns added --
+            r"\bexample\b",                 
+            r"\bfor\s+instance\b",
+            r"\bsuch\s+as\b",
+            r"\blike\s+this\s*[:\.]",
+            r"\bi\.e\.\s*,?",
+            r"\bsample\s+input\d*\b",
+            r"\bsample\s+output\d*\b",
         ]
         self.example_regex = re.compile(r"|".join(example_patterns), re.IGNORECASE | re.DOTALL)
 
