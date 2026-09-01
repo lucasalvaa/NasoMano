@@ -1,3 +1,7 @@
 fastapi
 pydantic
 uvicorn
+textstat
+
+language_tool_python
+jdk4py

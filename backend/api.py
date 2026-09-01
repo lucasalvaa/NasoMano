@@ -1,7 +1,7 @@
 import uvicorn
 
-from mano import PromptSmellFixer
 from naso import PromptSmellDetector
+from mano import PromptSmellFixer
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
