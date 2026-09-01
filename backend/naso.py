@@ -1,6 +1,13 @@
 import re
 import textstat
+import language_tool_python
 
+import os
+import jdk4py
+
+# Imposta la variabile d'ambiente JAVA_HOME puntando al Java portatile del venv
+os.environ["JAVA_HOME"] = str(jdk4py.JAVA_HOME)
+os.environ["PATH"] = str(jdk4py.JAVA_HOME / "bin") + os.pathsep + os.environ.get("PATH", "")
 
 class PromptSmellDetector:
     """
@@ -95,10 +102,14 @@ class PromptSmellDetector:
         ]
         self.example_regex = re.compile(r"|".join(example_patterns), re.IGNORECASE | re.DOTALL)
 
+        self.lang_tool = language_tool_python.LanguageTool('en-US')
+
+
     def __calculate_cls(self, prompt: str) -> float:
         """
-        Calculate the Complexity-Length Score (CLS) of a given prompt using the following formula:
+        Calculate the Complexity-Length Score (CLS) of a given prompt using the formula:
         CLS = 1 - min(1, ((WC / WC_max) + (GFI / 20)) / 2)
+        Where WC: word count; WC_max: length threshold; GFI: Gunning Fog Index.
         """
         # Given the structure of the formula, if the prompt is empty
         # or consists only of spaces, 1.0 may be returned directly.
@@ -115,6 +126,27 @@ class PromptSmellDetector:
         cls = 1.0 - min(1.0, inner_term)
 
         return round(cls, 4)
+
+
+    def __calculate_g(self, prompt: str) -> float:
+        """
+        Calculate Grammatical correctness (G) using the formula:
+        G = 1 - (n_matches / max(1, n_words))
+        Where n_matches: grammar/spelling issues; n_words: word count.
+        """
+        # Given the structure of the formula, if the prompt is empty
+        # or consists only of spaces, 1.0 may be returned directly.
+        if not prompt or prompt.strip() == "":
+            return 1.0
+
+        # Grammatical Correctness Score calculation
+        n_words = textstat.lexicon_count(prompt, removepunct=True)
+        matches = self.lang_tool.check(prompt)
+        n_matches = len(matches)
+        g_score = 1.0 - (n_matches / max(1, n_words))
+
+        return round(g_score, 4)
+
 
     def analyze_prompt(self, prompt: str) -> dict:
         """
@@ -144,6 +176,10 @@ class PromptSmellDetector:
         cls = self.__calculate_cls(prompt)
         CL_THRESHOLD = 0.75
 
+        # 7. Grammatical Correctness
+        g_score = self.__calculate_g(prompt)
+        G_THRESHOLD = 0.9
+
         return {
             "metrics": {
                 "reasoning_score": reasoning_score,
@@ -151,7 +187,8 @@ class PromptSmellDetector:
                 "role_assigned": has_role,
                 "structure_specified": has_structure,
                 "examples_count": examples_count,
-                "complexity_length_score": cls
+                "complexity_length_score": cls,
+                "grammatical_correctness_score": g_score
             },
             "smells_detected": {
                 "reasoning_suppression": reasoning_score == 0.0,
@@ -159,6 +196,7 @@ class PromptSmellDetector:
                 "role_suppression": has_role == 0,
                 "unspecified_output_structure": has_structure == 0,
                 "lack_of_examples": examples_count == 0,
-                "complexity_length": cls > CL_THRESHOLD
+                "complexity_length": cls > CL_THRESHOLD,
+                "poor_grammar": g_score < G_THRESHOLD
             }
         }
