@@ -12,12 +12,16 @@ os.environ["PATH"] = str(jdk4py.JAVA_HOME / "bin") + os.pathsep + os.environ.get
 class PromptSmellDetector:
     """
     Detect the presence of the following six “prompt smells” in English-Language prompts:
-    1. Reasoning Suppression
-    2. Lack of Self-Reflection
-    3. Role Suppression
-    4. Unspecified Output Structure
-    5. Lack of Examples
-    6. Complexity-Length
+    01. Reasoning Suppression
+    02. Lack of Self-Reflection
+    03. Role Suppression
+    04. Unspecified Output Structure
+    05. Lack of Examples
+    06. Complexity-Length
+    07. Grammatical Correctness
+    08. Formatting
+    09. Readability
+    10. Prompt Quality
     """
 
     def __init__(self):
@@ -147,6 +151,55 @@ class PromptSmellDetector:
 
         return round(g_score, 4)
 
+    def __calculate_c(self, prompt: str) -> float:
+        """
+        Calculate Readability (C) using the Flesch Reading Ease score.
+        The score is normalized to a 0.0 - 1.0 range (where 1.0 is maximum readability).
+        Standard Flesch Reading Ease can occasionally exceed 100 or drop below 0 for extreme texts,
+        so we clamp the final output strictly between 0 and 1.
+        """
+        if not prompt or prompt.strip() == "":
+            return 1.0
+
+        raw_score = textstat.flesch_reading_ease(prompt)
+        normalized_score = max(0.0, min(1.0, raw_score / 100.0))
+        return round(normalized_score, 4)
+
+
+    def __calculate_f(self, prompt: str) -> float:
+        """
+        Calculate Formatting (F) score as a normalized combination of
+        punctuation (40%), capitalization (40%) and layout indicators (20%).
+        """
+        if not prompt or prompt.strip() == "":
+            return 1.0
+
+        prompt = prompt.strip()
+
+        # Split text into sentences using a regular expression
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', prompt) if s.strip()]
+        if not sentences:
+            sentences = [prompt]
+
+        # 1. Calculate Capitalization Indicator [0-1] by counting
+        # how many sentences begin with a capital letter
+        capitalized_sentences = sum(1 for s in sentences if s[0].isupper())
+        cap_score = capitalized_sentences / len(sentences)
+
+        # 2. Calculate Punctuation Indicator [0-1] by counting
+        # how many sentences terminate with punctuation
+        punctuated_sentences = sum(1 for s in sentences if s[-1] in ".!?")
+        punct_score = punctuated_sentences / len(sentences)
+
+        # 3. Calculate Layout Indicator [0-1] by analyzing the presence of newlines or lists
+        has_layout = bool(re.search(r'\n|- |\* |\d+\.', prompt))
+        layout_score = 1.0 if has_layout else 0.0
+
+        # Compute the normalized combination using the following weights:
+        # Capitalization 40%, Punctuation 40%, Layout 20%
+        f_score = (cap_score * 0.4) + (punct_score * 0.4) + (layout_score * 0.2)
+        return round(max(0.0, min(1.0, f_score)), 4)
+
 
     def analyze_prompt(self, prompt: str) -> dict:
         """
@@ -180,6 +233,20 @@ class PromptSmellDetector:
         g_score = self.__calculate_g(prompt)
         G_THRESHOLD = 0.9
 
+        # 8. Readability (C)
+        c_score = self.__calculate_c(prompt)
+        # Un punteggio normalizzato < 0.5 (ovvero < 50 nel Flesch Reading Ease standard)
+        # corrisponde a un testo di difficile lettura (livello college o superiore)
+        C_THRESHOLD = 0.5
+
+        # 9. Formatting (F)
+        f_score = self.__calculate_f(prompt)
+        F_THRESHOLD = 0.75 # Soglia sotto la quale il prompt viene considerato mal formattato
+
+        # 10. Prompt Quality (PQS)
+        pqs_score = round((g_score + f_score + c_score) / 3, 4)
+        PQS_THRESHOLD = 0.7
+
         return {
             "metrics": {
                 "reasoning_score": reasoning_score,
@@ -188,7 +255,10 @@ class PromptSmellDetector:
                 "structure_specified": has_structure,
                 "examples_count": examples_count,
                 "complexity_length_score": cls,
-                "grammatical_correctness_score": g_score
+                "grammatical_correctness_score": g_score,
+                "readability_score": c_score,
+                "formatting_score": f_score,
+                "prompt_quality_score": pqs_score,
             },
             "smells_detected": {
                 "reasoning_suppression": reasoning_score == 0.0,
@@ -197,6 +267,9 @@ class PromptSmellDetector:
                 "unspecified_output_structure": has_structure == 0,
                 "lack_of_examples": examples_count == 0,
                 "complexity_length": cls > CL_THRESHOLD,
-                "poor_grammar": g_score < G_THRESHOLD
+                "poor_grammar": g_score < G_THRESHOLD,
+                "poor_readability": c_score < C_THRESHOLD,
+                "poor_formatting": f_score < F_THRESHOLD,
+                "low_quality": pqs_score < PQS_THRESHOLD,
             }
         }
