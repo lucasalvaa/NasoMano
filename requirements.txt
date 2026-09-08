@@ -5,8 +5,9 @@ uvicorn
 pandas
 pyarrow
 fastparquet
-openai
+ollama
 
 textstat
 language_tool_python
 jdk4py
+tqdm
