@@ -16,7 +16,7 @@ MAX_RETRIES = 3  # Numero di tentativi in caso di errore dell'API
 
 TIMEOUT_SECONDS = 45  # Tempo massimo di attesa (in secondi) prima di dichiarare la richiesta "morta"
 CHECKPOINT_INTERVAL = 50  # Ogni quante righe salvare il dataset intermedio
-OUTPUT_FILENAME = "../output/evaluated_prompts.csv"
+OUTPUT_FILENAME = "../output/evaluated_prompts.parquet"
 
 JUDGE_INSTRUCTIONS = """
 You are an impartial annotator. Your only job: decide whether the prompt
@@ -120,13 +120,6 @@ async def process_dataset(df: pd.DataFrame, client: AsyncClient) -> pd.DataFrame
 
     user_prompts = df[:]['natural_language_text'].tolist()
 
-    # Prepariamo i task asincroni
-    print(f"Preparing {len(user_prompts)} API calls...")
-    tasks = [
-        evaluate_prompt_with_llm(client, prompt, semaphore)
-        for prompt in user_prompts
-    ]
-
     # Eseguiamo i task con una progress bar per monitorare
     results = []
     os.makedirs(os.path.dirname(OUTPUT_FILENAME), exist_ok=True)
@@ -154,7 +147,7 @@ async def process_dataset(df: pd.DataFrame, client: AsyncClient) -> pd.DataFrame
                 "error": [res.get("error") for res in results]
             })
             # Sovrascrive il file ad ogni checkpoint con i dati aggiornati
-            temp_df.to_csv(OUTPUT_FILENAME, index=False)
+            temp_df.to_parquet(OUTPUT_FILENAME, index=False)
 
             # Aggiorniamo la barra di caricamento visiva
             pbar.update(len(batch_prompts))
@@ -169,6 +162,7 @@ def main():
     try:
         # Nota: assicurati di avere installato 'pyarrow' o 'fastparquet' (es. pip install pyarrow)
         df = pd.read_parquet(DATASET_PATH)
+        df = df.reset_index(drop=True)  # FONDAMENTALE: previene collisioni di scrittura
         print(f"Dataset successfully uploaded. Rows to process: {len(df)}")
     except Exception as e:
         print(f"Critical error while loading the Parquet dataset: {e}")
@@ -181,8 +175,20 @@ def main():
     final_df = asyncio.run(process_dataset(df, client))
 
     # Salvataggio del risultato
-    final_df.to_csv(OUTPUT_FILENAME, index=False)
+    final_df.to_parquet(OUTPUT_FILENAME, index=False)
     print(f"\nProcessing completed! Results saved in: {OUTPUT_FILENAME}")
+
+    total_prompts = len(final_df)
+    if total_prompts > 0:
+        # Usa pandas per sommare rapidamente tutti i valori True
+        true_count = (final_df['is_role_assigned'] == True).sum()
+        percentage = (true_count / total_prompts) * 100
+
+        print(f"\n--- Statistiche Finali ---")
+        print(f"Totale prompt analizzati: {total_prompts}")
+        print(f"Ruoli assegnati (True): {true_count} ({percentage:.2f}%)")
+    else:
+        print("\nNessun prompt analizzato.")
 
 
 if __name__ == "__main__":
