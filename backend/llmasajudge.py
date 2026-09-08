@@ -1,0 +1,160 @@
+import pandas as pd
+import json
+import asyncio
+# import ast
+import os
+from openai import AsyncOpenAI
+from tqdm.asyncio import tqdm
+
+# Configurazione
+DATASET_PATH = "../dataset/final_dataset.parquet"
+API_KEY = os.getenv("OPENAI_API_KEY", "EMPTY")
+BASE_URL = "http://localhost:11434/v1"  # Porta standard di Ollama locale
+MODEL_NAME = "qwen2.5:3b"  # IMPORTANTE: Sostituisci con l'identificativo esatto con cui è stato lanciato vLLM
+CONCURRENCY_LIMIT = 4  # Quante chiamate API fare in parallelo (aggiusta in base al tuo rate limit)
+MAX_RETRIES = 3  # Numero di tentativi in caso di errore dell'API
+
+JUDGE_INSTRUCTIONS = """
+You are an impartial annotator. Your only job: decide whether the prompt
+explicitly assigned the AI a persona/professional role before or during
+a software-related request.
+
+DEFINITION — is_role_assigned = true when the prompt contains a clear
+instruction directed at the assistant's own identity, e.g.:
+- "You are a senior [role]...", "Act as a...", "I want you to act as...",
+  "Pretend/imagine/assume you are...", "As an experienced [X], ..."
+- A pasted system-prompt-like persona definition for the assistant to embody.
+
+is_role_assigned = false when there is no such instruction, including these
+common false-positive traps — do NOT count them as role assignment:
+- "You are given an array/string/..." → describes problem INPUT, not the
+  assistant's identity.
+- References to roles inside the software/domain itself ("admin role",
+  "the Player class", "as a user of this API") → domain entities, not the
+  assistant.
+- The user describing their OWN background ("I'm a junior dev...") → role of
+  the user, not the model.
+- Generic boilerplate with no real persona/expertise attached ("you are a
+  helpful assistant") → weak/borderline; still counts as true but with lower
+  confidence, since a label is technically present.
+
+RULE: Scan the user's message for second-person/role language ("you are",
+"act as", "pretend", "assume", "your role", "as a/an..."). If at least one
+match is genuinely directed at the assistant's identity (not a false-positive
+trap above), return true; otherwise return false.
+
+CONFIDENCE (0-100, integer): how unambiguous the evidence is, regardless of
+direction (a clear absence also deserves a high score).
+- 90-100: unambiguous (explicit persona instruction, or unambiguous absence).
+- 70-89: clear but with minor ambiguity or unusual phrasing.
+- 50-69: genuinely borderline / could be read either way.
+- <50: use only when forced to guess on very unclear input.
+
+OUTPUT — strict, nothing else before/after:
+{"is_role_assigned": <true|false>, "confidence_score": <integer<=100>}
+
+PROMPT: 
+"""
+
+
+async def evaluate_prompt_with_llm(client: AsyncOpenAI, user_prompt: str, semaphore: asyncio.Semaphore) -> dict:
+    """
+    Invia il prompt all'LLM e gestisce il ritorno in formato JSON.
+    Usa un semaforo per limitare la concorrenza e gestisce i retry.
+    """
+    if not user_prompt:
+        return {"is_role_assigned": None, "confidence_score": None, "error": "Empty prompt"}
+
+    # Passo 3: Concatenare le istruzioni al prompt dell'utente
+    full_prompt = f"{JUDGE_INSTRUCTIONS}\"\"\"{user_prompt}\"\"\""
+
+    # Limitiamo il numero di chiamate concorrenti
+    async with semaphore:
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful JSON-outputting assistant."},
+                        {"role": "user", "content": full_prompt}
+                    ],
+                    response_format={"type": "json_object"},  # FORZA l'output a essere un JSON valido
+                    temperature=0.1  # Temperatura bassa per risposte deterministiche
+                )
+
+                # Passo 4: Estrarre i due campi richiesti
+                result_text = response.choices[0].message.content
+                result_json = json.loads(result_text)
+
+                return {
+                    "is_role_assigned": result_json.get("is_role_assigned", None),
+                    "confidence_score": result_json.get("confidence_score", None),
+                    "error": None
+                }
+            except Exception as e:
+                if attempt == MAX_RETRIES - 1:
+                    return {"is_role_assigned": None, "confidence_score": None, "error": str(e)}
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff prima di riprovare
+
+
+async def process_dataset(df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
+    """
+    Itera su tutto il dataframe, prepara i task asincroni ed esegue l'LLM come giudice.
+    """
+    semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+    # print("Estrazione dei prompt utente (Passo 1 e 2)...")
+    # user_prompts = df['conversation'].apply(extract_user_prompt).tolist()
+
+    user_prompts = df[:]['natural_language_text'].tolist()
+
+    # Prepariamo i task asincroni
+    print(f"Preparing {len(user_prompts)} API calls...")
+    tasks = [
+        evaluate_prompt_with_llm(client, prompt, semaphore)
+        for prompt in user_prompts
+    ]
+
+    # Eseguiamo i task con una progress bar per monitorare
+    results = await tqdm.gather(*tasks, desc="LLM-as-a-judge evaluation in progess...")
+
+    print("Creating the final dataset...")
+    final_data = {
+        "user_prompt": user_prompts,
+        "is_role_assigned": [res.get("is_role_assigned") for res in results],
+        "confidence_score": [res.get("confidence_score") for res in results],
+        "error": [res.get("error") for res in results]
+    }
+
+    return pd.DataFrame(final_data)
+
+
+def main():
+    # Lettura del dataset reale dal file parquet
+    print(f"Uploading dataset from {DATASET_PATH}...")
+
+    try:
+        # Nota: assicurati di avere installato 'pyarrow' o 'fastparquet' (es. pip install pyarrow)
+        df = pd.read_parquet(DATASET_PATH)
+        print(f"Dataset successfully uploaded. Rows to process: {len(df)}")
+    except Exception as e:
+        print(f"Critical error while loading the Parquet dataset: {e}")
+        return
+
+    # Inizializza il client OpenAI puntando al server vLLM locale
+    client = AsyncOpenAI(
+        api_key=API_KEY,
+        base_url=BASE_URL
+    )
+
+    # Esegui il loop asincrono
+    final_df = asyncio.run(process_dataset(df, client))
+
+    # Salvataggio del risultato
+    output_filename = "evaluated_prompts.csv"
+    final_df.to_csv(output_filename, index=False)
+    print(f"\nProcessing completed! Results saved in: {output_filename}")
+
+
+if __name__ == "__main__":
+    main()
