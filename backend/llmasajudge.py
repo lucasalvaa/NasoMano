@@ -1,22 +1,27 @@
 import pandas as pd
 import json
 import asyncio
-# import ast
 import os
 from ollama import AsyncClient
 from tqdm.asyncio import tqdm
 
+# Bypassa i proxy universitari/aziendali per le connessioni locali
+os.environ['NO_PROXY'] = 'localhost,127.0.0.1'
+os.environ['no_proxy'] = 'localhost,127.0.0.1'
+
 # Configurazione
 DATASET_PATH = "../dataset/final_dataset.parquet"
-API_KEY = os.getenv("OPENAI_API_KEY", "EMPTY")
-BASE_URL = "http://localhost:11434/v1"  # Porta standard di Ollama locale
-MODEL_NAME = "qwen2.5:3b"  # IMPORTANTE: Sostituisci con l'identificativo esatto con cui è stato lanciato vLLM
-CONCURRENCY_LIMIT = 4  # Quante chiamate API fare in parallelo (aggiusta in base al tuo rate limit)
-MAX_RETRIES = 3  # Numero di tentativi in caso di errore dell'API
-
-TIMEOUT_SECONDS = 45  # Tempo massimo di attesa (in secondi) prima di dichiarare la richiesta "morta"
-CHECKPOINT_INTERVAL = 50  # Ogni quante righe salvare il dataset intermedio
 OUTPUT_FILENAME = "../output/evaluated_prompts.parquet"
+
+# SOLUZIONE 1: Niente slash finale (/) e uso IP esplicito per evitare problemi di proxy/DNS
+BASE_URL = "http://127.0.0.1:11434"
+
+MODEL_NAME = "qwen2.5:7b"
+CONCURRENCY_LIMIT = 30
+MAX_RETRIES = 3
+
+TIMEOUT_SECONDS = 45
+CHECKPOINT_INTERVAL = 50
 
 JUDGE_INSTRUCTIONS = """
 You are an impartial annotator. Your only job: decide whether the prompt
@@ -62,17 +67,11 @@ PROMPT:
 
 
 async def evaluate_prompt_with_llm(client: AsyncClient, user_prompt: str, semaphore: asyncio.Semaphore) -> dict:
-    """
-    Invia il prompt all'LLM e gestisce il ritorno in formato JSON.
-    Usa un semaforo per limitare la concorrenza e gestisce i retry.
-    """
     if not user_prompt:
         return {"is_role_assigned": None, "confidence_score": None, "error": "Empty prompt"}
 
-    # Passo 3: Concatenare le istruzioni al prompt dell'utente
     full_prompt = f"{JUDGE_INSTRUCTIONS}\"\"\"{user_prompt}\"\"\""
 
-    # Limitiamo il numero di chiamate concorrenti
     async with semaphore:
         for attempt in range(MAX_RETRIES):
             try:
@@ -89,7 +88,6 @@ async def evaluate_prompt_with_llm(client: AsyncClient, user_prompt: str, semaph
                     timeout=TIMEOUT_SECONDS
                 )
 
-                # Passo 4: Estrarre i due campi richiesti
                 result_text = response['message']['content']
                 result_json = json.loads(result_text)
 
@@ -106,81 +104,61 @@ async def evaluate_prompt_with_llm(client: AsyncClient, user_prompt: str, semaph
             except Exception as e:
                 if attempt == MAX_RETRIES - 1:
                     return {"is_role_assigned": None, "confidence_score": None, "error": str(e)}
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff prima di riprovare
+                await asyncio.sleep(2 ** attempt)
 
 
 async def process_dataset(df: pd.DataFrame, client: AsyncClient) -> pd.DataFrame:
-    """
-    Itera su tutto il dataframe, prepara i task asincroni ed esegue l'LLM come giudice.
-    """
     semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
-    # print("Estrazione dei prompt utente (Passo 1 e 2)...")
-    # user_prompts = df['conversation'].apply(extract_user_prompt).tolist()
+    # SOLUZIONE 2: Rimosso il [:50] per elaborare l'intero dataset
+    user_prompts = df['natural_language_text'].tolist()
 
-    user_prompts = df[:]['natural_language_text'].tolist()
-
-    # Eseguiamo i task con una progress bar per monitorare
     results = []
     os.makedirs(os.path.dirname(OUTPUT_FILENAME), exist_ok=True)
 
     with tqdm(total=len(user_prompts), desc="Valutazione in corso") as pbar:
-        # Loop principale che suddivide in blocchi (chunks)
         for i in range(0, len(user_prompts), CHECKPOINT_INTERVAL):
             batch_prompts = user_prompts[i: i + CHECKPOINT_INTERVAL]
 
-            # Prepariamo i task per questo singolo lotto
             tasks = [
                 evaluate_prompt_with_llm(client, prompt, semaphore)
                 for prompt in batch_prompts
             ]
 
-            # Attendiamo che tutti i task di questo lotto finiscano
             batch_results = await asyncio.gather(*tasks)
             results.extend(batch_results)
 
-            # SALVATAGGIO INTERMEDIO (CHECKPOINT)
             temp_df = pd.DataFrame({
                 "user_prompt": user_prompts[:len(results)],
                 "is_role_assigned": [res.get("is_role_assigned") for res in results],
                 "confidence_score": [res.get("confidence_score") for res in results],
                 "error": [res.get("error") for res in results]
             })
-            # Sovrascrive il file ad ogni checkpoint con i dati aggiornati
-            temp_df.to_parquet(OUTPUT_FILENAME, index=False)
 
-            # Aggiorniamo la barra di caricamento visiva
+            temp_df.to_parquet(OUTPUT_FILENAME, index=False)
             pbar.update(len(batch_prompts))
 
     return temp_df
 
 
 def main():
-    # Lettura del dataset reale dal file parquet
     print(f"Uploading dataset from {DATASET_PATH}...")
 
     try:
-        # Nota: assicurati di avere installato 'pyarrow' o 'fastparquet' (es. pip install pyarrow)
         df = pd.read_parquet(DATASET_PATH)
-        df = df.reset_index(drop=True)  # FONDAMENTALE: previene collisioni di scrittura
+        df = df.reset_index(drop=True)
         print(f"Dataset successfully uploaded. Rows to process: {len(df)}")
     except Exception as e:
         print(f"Critical error while loading the Parquet dataset: {e}")
         return
 
-    # Inizializza il client Ollama puntando al server vLLM locale
-    client = AsyncClient(host="http://localhost:11434")
-
-    # Esegui il loop asincrono
+    client = AsyncClient(host=BASE_URL)
     final_df = asyncio.run(process_dataset(df, client))
 
-    # Salvataggio del risultato
-    final_df.to_parquet(OUTPUT_FILENAME, index=False)
     print(f"\nProcessing completed! Results saved in: {OUTPUT_FILENAME}")
 
     total_prompts = len(final_df)
     if total_prompts > 0:
-        # Usa pandas per sommare rapidamente tutti i valori True
         true_count = (final_df['is_role_assigned'] == True).sum()
         percentage = (true_count / total_prompts) * 100
 
