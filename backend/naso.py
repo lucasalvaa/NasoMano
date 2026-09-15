@@ -52,14 +52,14 @@ class PromptSmellDetector:
             r"review\s+(?:the|your)\s+(?:code|answer|solution|response|output)(?:\s+before\s+replying)?",
             r"verify\s+(?:your|the)\s+(?:answer|code|solution|correctness)",
             r"validate\s+(?:the|your)\s+(?:code|solution|output)",
-            r"make\s+sure\s+(?:there\s+are\s+no\s+(?:bugs|errors)|it\s+is\s+correct)",
+            r"make\s+sure\s+(?:there\s+are\s+no\s+(?:bugs|errors)|it\s+is\s     +correct)",
             r"ensure\s+(?:that\s+)?(?:the\s+code\s+works|it\s+is\s+bug[\s-]free|correctness)",
             r"reflect\s+on\s+your\s+(?:answer|solution|output)",
             r"self[\s-](?:correct|debug|check|review|reflect)",
             r"critique\s+(?:your|the)\s+(?:solution|code)",
             r"audit\s+the\s+(?:code|output|solution)",
             r"test\s+(?:your|the)\s+(?:code|solution)\s+for\s+edge\s+cases"
-            r"(?:review|check)\s+(?:this|my|the)\s+code",
+            # r"(?:review|check)\s+(?:this|my|the)\s+code",
             r"double[\s-]check\b",
             r"make\s+sure\s+(?:it|this|that)\s+(?:works|is\s+correct|runs|compiles)",
             r"ensure\s+(?:that\s+)?(?:this|it)\s+(?:works|is\s+correct|runs)",
@@ -70,20 +70,16 @@ class PromptSmellDetector:
 
         # 3. ROLE SUPPRESSION
         role_patterns = [
-            r"\bact\s+as\s+(?:a|an)?\b",
-            r"\byou\s+(?:'re|are)\s+(?:a|an)?\b",
-            r"\byou\s+(?:'ll|will)\s+act\s+as\b",
-            r"\bas\s+an?\s+expert\s+in\b",
-            r"\bpretend\s+to\s+be\b",
-            r"\bassume\s+the\s+role\s+of\b",
-            r"\btake\s+on\s+the\s+role\s+of\b",
-            r"\bimagine\s+you\s+are\b",
+            r"\b(?:act|working)\s+as\s+(?:a|an)\b",
+            r"\byou\s+(?:['’]ll|will)\s+act\s+as\b",
+            r"\b(?:act)?as\s+(?:a|an)?\s+expert\s+in\b",
+            r"\b(imagine\s+)?you\s+(?:['’]re|are)\s+(?:a|an)\b",
+            r"\b\bpretend\s+(?:to\s+be|you(?:\s+are|['’]re))\b", # pretend to be, you are, you're
+            r"\b(?:assume|take\s+on)\s+the\s+role\s+of\b",
             r"\bbehave\s+like\s+(?:a|an)?\b",
-            r"\brole\s*:\s*\w+",
-            r"\bpersona\s*:\s*\w+",
+            r"\b(?:persona|role)\s*:\s*\w+",
             r"\bin\s+your\s+capacity\s+as\b",
             r"\bin\s+the\s+role\s+of\b",
-            r"\bworking\s+as\s+(?:a|an)\b",
             r"\b(?:(?:think|act|behave|write|code)\s+like|(?:acting\s+)?as)\s+(?:a|an)\s+(?:\w+\s+){0,2}(?:programmer|"
             r"developer|expert|engineer|scientist|analyst|assistant|professional|consultant|specialist|"
             r"architect|coder|designer|writer|tutor|teacher|translator|reviewer|researcher)\b"
@@ -92,26 +88,21 @@ class PromptSmellDetector:
 
         # 4. UNSPECIFIED OUTPUT STRUCTURE
         structure_patterns = [
-            r"output\s+format\s*:",
-            r"output\s+structure\s*:",
-            r"structure\s+the\s+output\s+as",
-            r"format\s+(?:your|the)\s+output\s+as",
-            r"the\s+output\s+must\s+be\b",
-            r"output\s+length\s+must\s+be",
+            r"output\s+(?:structure|format)\s*:",
+            r"output\s+(length\s+)?must\s+be",
+            r"(?:structure|format)\s+(?:your|the)\s+output\s+(?:as|in)",
             r"return\s+(?:only|strictly)\b",
-            r"respond\s+(?:only|strictly)\s+in",
+            r"respond\s+(?:only|strictly)\s+in\s+(?:plain\s+text|markdown)?",
             r"format\s*:\s*(?:json|markdown|yaml|xml|csv|table|python\s+code|code\s+block)",
             r"produce\s+(?:the\s+)?output\s+in",
             r"use\s+the\s+following\s+(?:schema|template|format|structure)",
-            r"limit\s+(?:the\s+)?output\s+to",
-            r"keep\s+(?:your\s+)?response\s+under"
-            r"\bin\s+json\s+format\b",
-            r"\bjson\s+(?:array|object|string)\b",
-            r"\b(?:in|as)\s+(?:the\s+)?following\s+format\b",
-            r"\bas\s+follows\s*:",
-            r"\brespond\s+in\s+plain\s+text\b",
-            r"\b(?:without|no)\s+(?:any\s+)?markdown\b",
+            r"limit\s+(?:your|the\s+)?output\s+to",
+            r"keep\s+(?:your|the\s+)?response\s+under"
+            r"\bin\s+json\s+(?:array|object|string|format)\b",
             r"\bin\s+markdown\b",
+            r"\b(?:in|as)\s+(?:the\s+)?following\s+format\b",
+            # r"\bas\s+follows\s*:",
+            r"\b(?:without|no)\s+(?:any\s+)?markdown\b",
             r"\breturn\s+(?:the\s+)?(?:results?|output|answer|response)\s+in\b",
             r"\b(?:numbered|bulleted)\s+list\b",
         ]
@@ -130,7 +121,11 @@ class PromptSmellDetector:
         ]
         self.example_regex = re.compile(r"|".join(example_patterns), re.IGNORECASE | re.DOTALL)
 
-        self.lang_tool = language_tool_python.LanguageTool('en-US')
+        # self.lang_tool = language_tool_python.LanguageTool('en-US')
+        self.lang_tool = language_tool_python.LanguageTool(
+            'en-US',
+            remote_server='http://127.0.0.1:8081/'
+        )
 
 
     def __calculate_cls(self, prompt: str) -> float:
