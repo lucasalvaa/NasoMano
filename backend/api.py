@@ -56,7 +56,7 @@ async def detect_smells_endpoint(request: DetectRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="The prompt provided is empty.")
 
-    analysis = detector.analyze_prompt(request.prompt)
+    analysis = await detector.analyze_prompt(request.prompt, continuous_metrics=False)
     return analysis
 
 
