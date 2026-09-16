@@ -1,17 +1,10 @@
-import re
-import textstat
-import language_tool_python
+from llm_judge import LLMJudgeEvaluator
+from syntactic_metrics import SyntacticMetricsEvaluator
 
-import os
-import jdk4py
-
-# Imposta la variabile d'ambiente JAVA_HOME puntando al Java portatile del venv
-os.environ["JAVA_HOME"] = str(jdk4py.JAVA_HOME)
-os.environ["PATH"] = str(jdk4py.JAVA_HOME / "bin") + os.pathsep + os.environ.get("PATH", "")
 
 class PromptSmellDetector:
     """
-    Detect the presence of the following six “prompt smells” in English-Language prompts:
+    Detect the presence of the following ten “prompt smells” in English-Language prompts:
     01. Reasoning Suppression
     02. Lack of Self-Reflection
     03. Role Suppression
@@ -25,275 +18,82 @@ class PromptSmellDetector:
     """
 
     def __init__(self):
-        # 1. REASONING SUPPRESSION (Classic CoT only)
-        cot_patterns = [
-            r"let'?s\s+(?:think|reason|solve|work)\s+step[\s-]by[\s-]step",
-            r"think\s+logically\s+and\s+step[\s-]by[\s-]step",
-            r"think\s+(?:through\s+this\s+)?step[\s-]by[\s-]step",
-            r"reason\s+step[\s-]by[\s-]step",
-            r"\bfirst\b.*?\bthen\b.*?\bfinally\b",
-            r"break\s+down\s+(?:the|this)\s+(?:problem|task|code)\s+step[\s-]by[\s-]step",
-            r"walk\s+me\s+through\s+your\s+(?:thought\s+process|logic|reasoning)",
-            r"explain\s+how\s+you\s+(?:arrived|got|reached)",
-            r"explain\s+your\s+reasoning\s+(?:step[\s-]by[\s-]step|clearly)",
-            r"explain\s+(?:your|the)\s+(?:reasoning|logic|methodology|thought\s+process)",
-            r"work\s+through\s+this\s+(?:systematically|methodically|step[\s-]by[\s-]step)",
-            r"take\s+a\s+deep\s+breath\s+and\s+think",
-            r"show\s+your\s+(?:work|working|steps|thought\s+process)",
-            r"break\s*(?:down|this|it)\s+(?:down\s+)?into\s+steps",
-            r"breakdown\s+of\s+(?:the\s+)?steps",
-        ]
-        self.cot_regex = re.compile(r"|".join(cot_patterns), re.IGNORECASE | re.DOTALL)
+        self.llm_judge = LLMJudgeEvaluator()
+        self.syntactic_eval = SyntacticMetricsEvaluator()
 
-        # 2. LACK OF SELF-REFLECTION
-        self_reflection_patterns = [
-            r"check\s+(?:to\s+see\s+)?if\s+(?:your|the)\s+(?:answer|code|solution|output)\s+is\s+correct",
-            r"double[\s-]check\s+(?:your|the)\s+(?:work|code|answer|solution|output)",
-            r"review\s+(?:the|your)\s+(?:code|answer|solution|response|output)(?:\s+before\s+replying)?",
-            r"verify\s+(?:your|the)\s+(?:answer|code|solution|correctness)",
-            r"validate\s+(?:the|your)\s+(?:code|solution|output)",
-            r"make\s+sure\s+(?:there\s+are\s+no\s+(?:bugs|errors)|it\s+is\s+correct)",
-            r"ensure\s+(?:that\s+)?(?:the\s+code\s+works|it\s+is\s+bug[\s-]free|correctness)",
-            r"reflect\s+on\s+your\s+(?:answer|solution|output)",
-            r"self[\s-](?:correct|debug|check|review|reflect)",
-            r"critique\s+(?:your|the)\s+(?:solution|code)",
-            r"audit\s+the\s+(?:code|output|solution)",
-            r"test\s+(?:your|the)\s+(?:code|solution)\s+for\s+edge\s+cases"
-            r"(?:review|check)\s+(?:this|my|the)\s+code",
-            r"double[\s-]check\b",
-            r"make\s+sure\s+(?:it|this|that)\s+(?:works|is\s+correct|runs|compiles)",
-            r"ensure\s+(?:that\s+)?(?:this|it)\s+(?:works|is\s+correct|runs)",
-            r"sanity[\s-]check",
-            r"confirm\s+(?:that\s+)?(?:it|this)\s+(?:works|is\s+correct)",
-        ]
-        self.self_reflection_regex = re.compile(r"|".join(self_reflection_patterns), re.IGNORECASE)
-
-        # 3. ROLE SUPPRESSION
-        role_patterns = [
-            r"\bact\s+as\s+(?:a|an)?\b",
-            r"\byou\s+(?:'re|are)\s+(?:a|an)?\b",
-            r"\byou\s+(?:'ll|will)\s+act\s+as\b",
-            r"\bas\s+an?\s+expert\s+in\b",
-            r"\bpretend\s+to\s+be\b",
-            r"\bassume\s+the\s+role\s+of\b",
-            r"\btake\s+on\s+the\s+role\s+of\b",
-            r"\bimagine\s+you\s+are\b",
-            r"\bbehave\s+like\s+(?:a|an)?\b",
-            r"\brole\s*:\s*\w+",
-            r"\bpersona\s*:\s*\w+",
-            r"\bin\s+your\s+capacity\s+as\b",
-            r"\bin\s+the\s+role\s+of\b",
-            r"\bworking\s+as\s+(?:a|an)\b",
-            r"\b(?:(?:think|act|behave|write|code)\s+like|(?:acting\s+)?as)\s+(?:a|an)\s+(?:\w+\s+){0,2}(?:programmer|"
-            r"developer|expert|engineer|scientist|analyst|assistant|professional|consultant|specialist|"
-            r"architect|coder|designer|writer|tutor|teacher|translator|reviewer|researcher)\b"
-        ]
-        self.role_regex = re.compile(r"|".join(role_patterns), re.IGNORECASE)
-
-        # 4. UNSPECIFIED OUTPUT STRUCTURE
-        structure_patterns = [
-            r"output\s+format\s*:",
-            r"output\s+structure\s*:",
-            r"structure\s+the\s+output\s+as",
-            r"format\s+(?:your|the)\s+output\s+as",
-            r"the\s+output\s+must\s+be\b",
-            r"output\s+length\s+must\s+be",
-            r"return\s+(?:only|strictly)\b",
-            r"respond\s+(?:only|strictly)\s+in",
-            r"format\s*:\s*(?:json|markdown|yaml|xml|csv|table|python\s+code|code\s+block)",
-            r"produce\s+(?:the\s+)?output\s+in",
-            r"use\s+the\s+following\s+(?:schema|template|format|structure)",
-            r"limit\s+(?:the\s+)?output\s+to",
-            r"keep\s+(?:your\s+)?response\s+under"
-            r"\bin\s+json\s+format\b",
-            r"\bjson\s+(?:array|object|string)\b",
-            r"\b(?:in|as)\s+(?:the\s+)?following\s+format\b",
-            r"\bas\s+follows\s*:",
-            r"\brespond\s+in\s+plain\s+text\b",
-            r"\b(?:without|no)\s+(?:any\s+)?markdown\b",
-            r"\bin\s+markdown\b",
-            r"\breturn\s+(?:the\s+)?(?:results?|output|answer|response)\s+in\b",
-            r"\b(?:numbered|bulleted)\s+list\b",
-        ]
-        self.structure_regex = re.compile(r"|".join(structure_patterns), re.IGNORECASE)
-
-        # 5. LACK OF EXAMPLES
-        example_patterns = [
-            r"(?:input|in)\s*:\s*.*?\s*(?:output|out)\s*:",
-            r"example\s*(?:\d+|[a-z])?\s*:",
-            r"sample\s+(?:input|output|code)\s*:",
-            r"for\s+example\s*:",
-            r"here\s+is\s+an?\s+example\s*:",
-            r"e\.g\.\s*,?",
-            r"test\s+case\s*\d*\s*:",
-            r"input\s+example\s*:"
-        ]
-        self.example_regex = re.compile(r"|".join(example_patterns), re.IGNORECASE | re.DOTALL)
-
-        self.lang_tool = language_tool_python.LanguageTool('en-US')
-
-
-    def __calculate_cls(self, prompt: str) -> float:
-        """
-        Calculate the Complexity-Length Score (CLS) of a given prompt using the formula:
-        CLS = 1 - min(1, ((WC / WC_max) + (GFI / 20)) / 2)
-        Where WC: word count; WC_max: length threshold; GFI: Gunning Fog Index.
-        """
-        # Given the structure of the formula, if the prompt is empty
-        # or consists only of spaces, 1.0 may be returned directly.
-        if not prompt or prompt.strip() == "":
-            return 1.0
-
-        # Length threshold constant
-        WC_MAX = 60.0
-
-        # Complexity-Length Score calculation
-        wc = textstat.lexicon_count(prompt, removepunct=True)
-        gfi = textstat.gunning_fog(prompt)
-        inner_term = ((wc / WC_MAX) + (gfi / 20.0)) / 2.0
-        cls = 1.0 - min(1.0, inner_term)
-
-        return round(cls, 4)
-
-
-    def __calculate_g(self, prompt: str) -> float:
-        """
-        Calculate Grammatical correctness (G) using the formula:
-        G = 1 - (n_matches / max(1, n_words))
-        Where n_matches: grammar/spelling issues; n_words: word count.
-        """
-        # Given the structure of the formula, if the prompt is empty
-        # or consists only of spaces, 1.0 may be returned directly.
-        if not prompt or prompt.strip() == "":
-            return 1.0
-
-        # Grammatical Correctness Score calculation
-        n_words = textstat.lexicon_count(prompt, removepunct=True)
-        matches = self.lang_tool.check(prompt)
-        n_matches = len(matches)
-        g_score = 1.0 - (n_matches / max(1, n_words))
-
-        return round(g_score, 4)
-
-    def __calculate_c(self, prompt: str) -> float:
-        """
-        Calculate Readability (C) using the Flesch Reading Ease score.
-        The score is normalized to a 0.0 - 1.0 range (where 1.0 is maximum readability).
-        Standard Flesch Reading Ease can occasionally exceed 100 or drop below 0 for extreme texts,
-        so we clamp the final output strictly between 0 and 1.
-        """
-        if not prompt or prompt.strip() == "":
-            return 1.0
-
-        raw_score = textstat.flesch_reading_ease(prompt)
-        normalized_score = max(0.0, min(1.0, raw_score / 100.0))
-        return round(normalized_score, 4)
-
-
-    def __calculate_f(self, prompt: str) -> float:
-        """
-        Calculate Formatting (F) score as a normalized combination of
-        punctuation (40%), capitalization (40%) and layout indicators (20%).
-        """
-        if not prompt or prompt.strip() == "":
-            return 1.0
-
-        prompt = prompt.strip()
-
-        # Split text into sentences using a regular expression
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', prompt) if s.strip()]
-        if not sentences:
-            sentences = [prompt]
-
-        # 1. Calculate Capitalization Indicator [0-1] by counting
-        # how many sentences begin with a capital letter
-        capitalized_sentences = sum(1 for s in sentences if s[0].isupper())
-        cap_score = capitalized_sentences / len(sentences)
-
-        # 2. Calculate Punctuation Indicator [0-1] by counting
-        # how many sentences terminate with punctuation
-        punctuated_sentences = sum(1 for s in sentences if s[-1] in ".!?")
-        punct_score = punctuated_sentences / len(sentences)
-
-        # 3. Calculate Layout Indicator [0-1] by analyzing the presence of newlines or lists
-        has_layout = bool(re.search(r'\n|- |\* |\d+\.', prompt))
-        layout_score = 1.0 if has_layout else 0.0
-
-        # Compute the normalized combination using the following weights:
-        # Capitalization 40%, Punctuation 40%, Layout 20%
-        f_score = (cap_score * 0.4) + (punct_score * 0.4) + (layout_score * 0.2)
-        return round(max(0.0, min(1.0, f_score)), 4)
-
-
-    def analyze_prompt(self, prompt: str) -> dict:
+    async def analyze_prompt(
+            self,
+            prompt: str,
+            eval_judge_metrics: bool = True,
+            eval_syntactic_metrics: bool = True
+    ) -> dict:
         """
         Analyze an individual prompt and return metrics and the presence of smells.
+
+        Parameters:
+            prompt (str): The prompt to analyze.
+            eval_judge_metrics (bool, optional): Whether to evaluate metrics from 01 to 05.
+            eval_syntactic_metrics (bool, optional): Whether to evaluate metrics from 06 to 10.
+
+        Returns:
+            metrics (dict): Dictionary containing the ten metrics reported by the evaluator.
+
+            If any of the two flags is set to false, the return value for those five smells is "None".
         """
-        # 1. Reasoning Suppression
-        cot_matches = self.cot_regex.findall(prompt)
-        reasoning_score = 0.5 if len(cot_matches) > 0 else 0.0
+        if not prompt or not isinstance(prompt, str) or prompt.strip() == "":
+            raise ValueError("The prompt provided is empty.")
 
-        # 2. Self Reflection
-        self_reflection_matches = self.self_reflection_regex.findall(prompt)
-        has_self_reflection = 1 if len(self_reflection_matches) > 0 else 0
+        metrics: dict = {
+            "reasoning_score": None,
+            "self_reflection_present": None,
+            "role_assigned": None,
+            "structure_specified": None,
+            "examples_count": None,
+            "complexity_length_score": None,
+            "grammatical_correctness_score": None,
+            "readability_score": None,
+            "formatting_score": None,
+            "prompt_quality_score": None
+        }
 
-        # 3. Role Assignment
-        role_matches = self.role_regex.findall(prompt)
-        has_role = 1 if len(role_matches) > 0 else 0
+        if eval_judge_metrics:
+            llm_results = await self.llm_judge.evaluate(prompt)
+            metrics["reasoning_score"] = 1 if llm_results.get("is_reasoning_required") else 0
+            metrics["self_reflection_present"] = 1 if llm_results.get("self_reflection_present") else 0
+            metrics["role_assigned"] = 1 if llm_results.get("is_role_assigned") else 0
+            metrics["structure_specified"] = 1 if llm_results.get("structure_specified") else 0
+            metrics["examples_count"] = llm_results.get("examples_count", 0)
 
-        # 4. Output Structure Specification
-        structure_matches = self.structure_regex.findall(prompt)
-        has_structure = 1 if len(structure_matches) > 0 else 0
+        if eval_syntactic_metrics:
+            syntactic_eval_results = self.syntactic_eval.evaluate(prompt)
+            metrics["complexity_length_score"] = syntactic_eval_results.get("complexity_length_score", None)
+            metrics["grammatical_correctness_score"] = syntactic_eval_results.get("grammatical_correctness_score", None)
+            metrics["readability_score"] = syntactic_eval_results.get("readability_score", None)
+            metrics["formatting_score"] = syntactic_eval_results.get("formatting_score", None)
+            metrics["prompt_quality_score"] = syntactic_eval_results.get("prompt_quality_score", None)
 
-        # 5. Examples Count
-        example_matches = self.example_regex.findall(prompt)
-        examples_count = len(example_matches)
+        # The thresholds for determining whether a syntactic prompt smell is present
+        CL_THRESHOLD = 0.75  # Complexity Length
+        G_THRESHOLD = 0.9  # Grammatical Correctness
+        C_THRESHOLD = 0.6  # Readability
+        F_THRESHOLD = 0.75  # Formatting
+        PQ_THRESHOLD = 0.7  # Prompt Quality
 
-        # 6. Complexity Length
-        cls = self.__calculate_cls(prompt)
-        CL_THRESHOLD = 0.75
-
-        # 7. Grammatical Correctness
-        g_score = self.__calculate_g(prompt)
-        G_THRESHOLD = 0.9
-
-        # 8. Readability (C)
-        c_score = self.__calculate_c(prompt)
-        # Un punteggio normalizzato < 0.5 (ovvero < 50 nel Flesch Reading Ease standard)
-        # corrisponde a un testo di difficile lettura (livello college o superiore)
-        C_THRESHOLD = 0.5
-
-        # 9. Formatting (F)
-        f_score = self.__calculate_f(prompt)
-        F_THRESHOLD = 0.75 # Soglia sotto la quale il prompt viene considerato mal formattato
-
-        # 10. Prompt Quality (PQS)
-        pqs_score = round((g_score + f_score + c_score) / 3, 4)
-        PQS_THRESHOLD = 0.7
+        def check_smell(value, condition):
+            return condition(value) if value is not None else None
 
         return {
-            "metrics": {
-                "reasoning_score": reasoning_score,
-                "self_reflection_present": has_self_reflection,
-                "role_assigned": has_role,
-                "structure_specified": has_structure,
-                "examples_count": examples_count,
-                "complexity_length_score": cls,
-                "grammatical_correctness_score": g_score,
-                "readability_score": c_score,
-                "formatting_score": f_score,
-                "prompt_quality_score": pqs_score,
-            },
+            "metrics": metrics,
             "smells_detected": {
-                "reasoning_suppression": reasoning_score == 0.0,
-                "lack_of_self_reflection": has_self_reflection == 0,
-                "role_suppression": has_role == 0,
-                "unspecified_output_structure": has_structure == 0,
-                "lack_of_examples": examples_count == 0,
-                "complexity_length": cls > CL_THRESHOLD,
-                "poor_grammar": g_score < G_THRESHOLD,
-                "poor_readability": c_score < C_THRESHOLD,
-                "poor_formatting": f_score < F_THRESHOLD,
-                "low_quality": pqs_score < PQS_THRESHOLD,
+                "reasoning_suppression": check_smell(metrics["reasoning_score"], lambda x: x == 0.0),
+                "lack_of_self_reflection": check_smell(metrics["self_reflection_present"], lambda x: x == 0),
+                "role_suppression": check_smell(metrics["role_assigned"], lambda x: x == 0),
+                "unspecified_output_structure": check_smell(metrics["structure_specified"], lambda x: x == 0),
+                "lack_of_examples": check_smell(metrics["examples_count"], lambda x: x == 0),
+                "complexity_length": check_smell(metrics["complexity_length_score"], lambda x: x > CL_THRESHOLD),
+                "poor_grammar": check_smell(metrics["grammatical_correctness_score"], lambda x: x < G_THRESHOLD),
+                "poor_readability": check_smell(metrics["readability_score"], lambda x: x < C_THRESHOLD),
+                "poor_formatting": check_smell(metrics["formatting_score"], lambda x: x < F_THRESHOLD),
+                "low_quality": check_smell(metrics["prompt_quality_score"], lambda x: x < PQ_THRESHOLD),
             }
         }

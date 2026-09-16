@@ -1,7 +1,17 @@
+# Necessary for the API
 fastapi
-pydantic
 uvicorn
-textstat
 
+# Necessary for the tool "Naso"
+ollama
+textstat
 language_tool_python
-jdk4py
+
+# Necessary for both the llm_judge module and the API
+pydantic
+
+# Necessary to replicate the experiment on the CodeChat 2.0 subset
+pandas
+pyarrow
+fastparquet
+tqdm
