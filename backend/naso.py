@@ -1,12 +1,10 @@
-import asyncio
-
-from llm_judge import LLMJudge
-from continuous_metrics import ContinuousMetricsEvaluator
+from llm_judge import LLMJudgeEvaluator
+from syntactic_metrics import SyntacticMetricsEvaluator
 
 
 class PromptSmellDetector:
     """
-    Detect the presence of the following six “prompt smells” in English-Language prompts:
+    Detect the presence of the following ten “prompt smells” in English-Language prompts:
     01. Reasoning Suppression
     02. Lack of Self-Reflection
     03. Role Suppression
@@ -20,15 +18,32 @@ class PromptSmellDetector:
     """
 
     def __init__(self):
-        self.llm_judge = LLMJudge()
-        self.metrics_evaluator = ContinuousMetricsEvaluator()
+        self.llm_judge = LLMJudgeEvaluator()
+        self.syntactic_eval = SyntacticMetricsEvaluator()
 
-    async def analyze_prompt(self, prompt: str, judge: bool = True, continuous_metrics: bool = True) -> dict:
+    async def analyze_prompt(
+            self,
+            prompt: str,
+            eval_judge_metrics: bool = True,
+            eval_syntactic_metrics: bool = True
+    ) -> dict:
         """
         Analyze an individual prompt and return metrics and the presence of smells.
-        """
 
-        metrics = {
+        Parameters:
+            prompt (str): The prompt to analyze.
+            eval_judge_metrics (bool, optional): Whether to evaluate metrics from 01 to 05.
+            eval_syntactic_metrics (bool, optional): Whether to evaluate metrics from 06 to 10.
+
+        Returns:
+            metrics (dict): Dictionary containing the ten metrics reported by the evaluator.
+
+            If any of the two flags is set to false, the return value for those five smells is "None".
+        """
+        if not prompt or not isinstance(prompt, str) or prompt.strip() == "":
+            raise ValueError("The prompt provided is empty.")
+
+        metrics: dict = {
             "reasoning_score": None,
             "self_reflection_present": None,
             "role_assigned": None,
@@ -41,61 +56,44 @@ class PromptSmellDetector:
             "prompt_quality_score": None
         }
 
-        if judge:
+        if eval_judge_metrics:
             llm_results = await self.llm_judge.evaluate(prompt)
-
-            # Map the Pydantic boolean outputs to numeric values (1.0 / 0.0)
-            metrics["reasoning_score"] = 1.0 if llm_results.get("is_reasoning_required") else 0.0
+            metrics["reasoning_score"] = 1 if llm_results.get("is_reasoning_required") else 0
             metrics["self_reflection_present"] = 1 if llm_results.get("self_reflection_present") else 0
             metrics["role_assigned"] = 1 if llm_results.get("is_role_assigned") else 0
             metrics["structure_specified"] = 1 if llm_results.get("structure_specified") else 0
             metrics["examples_count"] = llm_results.get("examples_count", 0)
 
-        if continuous_metrics:
-            cont_results = self.metrics_evaluator.evaluate(prompt)
+        if eval_syntactic_metrics:
+            syntactic_eval_results = self.syntactic_eval.evaluate(prompt)
+            metrics["complexity_length_score"] = syntactic_eval_results.get("complexity_length_score", None)
+            metrics["grammatical_correctness_score"] = syntactic_eval_results.get("grammatical_correctness_score", None)
+            metrics["readability_score"] = syntactic_eval_results.get("readability_score", None)
+            metrics["formatting_score"] = syntactic_eval_results.get("formatting_score", None)
+            metrics["prompt_quality_score"] = syntactic_eval_results.get("prompt_quality_score", None)
 
-            metrics["complexity_length_score"] = cont_results.get("complexity_length_score", 1.0)
-            metrics["grammatical_correctness_score"] = cont_results.get("grammatical_correctness_score", 1.0)
-            metrics["readability_score"] = cont_results.get("readability_score", 1.0)
-            metrics["formatting_score"] = cont_results.get("formatting_score", 1.0)
+        # The thresholds for determining whether a syntactic prompt smell is present
+        CL_THRESHOLD = 0.75  # Complexity Length
+        G_THRESHOLD = 0.9  # Grammatical Correctness
+        C_THRESHOLD = 0.6  # Readability
+        F_THRESHOLD = 0.75  # Formatting
+        PQ_THRESHOLD = 0.7  # Prompt Quality
 
-            # Calculate Prompt Quality Score as the average of the 4 continuous metrics.
-            # Using (1.0 - complexity) to align it positively with the other metrics.
-            cls = metrics["complexity_length_score"]
-            g_score = metrics["grammatical_correctness_score"]
-            c_score = metrics["readability_score"]
-            f_score = metrics["formatting_score"]
-
-            metrics["prompt_quality_score"] = round(((1.0 - cls) + g_score + c_score + f_score) / 4.0, 4)
-
-        CL_THRESHOLD = 0.75
-        G_THRESHOLD = 0.9
-        C_THRESHOLD = 0.5
-        F_THRESHOLD = 0.75  # Soglia sotto la quale il prompt viene considerato mal formattato
-        PQS_THRESHOLD = 0.7
+        def check_smell(value, condition):
+            return condition(value) if value is not None else None
 
         return {
             "metrics": metrics,
             "smells_detected": {
-                # Conditional safe evaluation to prevent NoneType errors if one of the flags was False
-                "reasoning_suppression": metrics["reasoning_score"] == 0.0 if metrics[
-                                                                                  "reasoning_score"] is not None else False,
-                "lack_of_self_reflection": metrics["self_reflection_present"] == 0 if metrics[
-                                                                                          "self_reflection_present"] is not None else False,
-                "role_suppression": metrics["role_assigned"] == 0 if metrics["role_assigned"] is not None else False,
-                "unspecified_output_structure": metrics["structure_specified"] == 0 if metrics[
-                                                                                           "structure_specified"] is not None else False,
-                "lack_of_examples": metrics["examples_count"] == 0 if metrics["examples_count"] is not None else False,
-
-                "complexity_length": metrics["complexity_length_score"] > CL_THRESHOLD if metrics[
-                                                                                              "complexity_length_score"] is not None else False,
-                "poor_grammar": metrics["grammatical_correctness_score"] < G_THRESHOLD if metrics[
-                                                                                              "grammatical_correctness_score"] is not None else False,
-                "poor_readability": metrics["readability_score"] < C_THRESHOLD if metrics[
-                                                                                      "readability_score"] is not None else False,
-                "poor_formatting": metrics["formatting_score"] < F_THRESHOLD if metrics[
-                                                                                    "formatting_score"] is not None else False,
-                "low_quality": metrics["prompt_quality_score"] < PQS_THRESHOLD if metrics[
-                                                                                      "prompt_quality_score"] is not None else False,
+                "reasoning_suppression": check_smell(metrics["reasoning_score"], lambda x: x == 0.0),
+                "lack_of_self_reflection": check_smell(metrics["self_reflection_present"], lambda x: x == 0),
+                "role_suppression": check_smell(metrics["role_assigned"], lambda x: x == 0),
+                "unspecified_output_structure": check_smell(metrics["structure_specified"], lambda x: x == 0),
+                "lack_of_examples": check_smell(metrics["examples_count"], lambda x: x == 0),
+                "complexity_length": check_smell(metrics["complexity_length_score"], lambda x: x > CL_THRESHOLD),
+                "poor_grammar": check_smell(metrics["grammatical_correctness_score"], lambda x: x < G_THRESHOLD),
+                "poor_readability": check_smell(metrics["readability_score"], lambda x: x < C_THRESHOLD),
+                "poor_formatting": check_smell(metrics["formatting_score"], lambda x: x < F_THRESHOLD),
+                "low_quality": check_smell(metrics["prompt_quality_score"], lambda x: x < PQ_THRESHOLD),
             }
         }

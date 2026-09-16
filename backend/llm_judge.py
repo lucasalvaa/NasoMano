@@ -3,7 +3,7 @@ import asyncio
 from pydantic import BaseModel, Field
 from ollama import AsyncClient
 
-# Pydantic Schema for guided decoding
+# Pydantic schema for guided decoding
 class PromptEvaluation(BaseModel):
     is_role_assigned: bool
     is_reasoning_required: bool
@@ -54,7 +54,7 @@ Response: {
 """
 
 
-class LLMJudge:
+class LLMJudgeEvaluator:
     def __init__(self,
                  model_name="qwen2.5:3b",
                  base_url="http://127.0.0.1:11434",
@@ -72,19 +72,12 @@ class LLMJudge:
 
         self.semaphore = asyncio.Semaphore(concurrency_limit)
 
-    async def evaluate(self, user_prompt: str) -> dict | None:
+    async def evaluate(self, prompt: str) -> dict | None:
 
-        if not user_prompt or not user_prompt.strip():
-            return {
-                "is_reasoning_required": None,
-                "self_reflection_present": None,
-                "is_role_assigned": None,
-                "structure_specified": None,
-                "examples_count": None,
-                "error": "Empty prompt"
-            }
+        if not prompt or not prompt.strip():
+            raise ValueError("The prompt provided is empty.")
 
-        full_prompt = f"{JUDGE_INSTRUCTIONS}\n\nPROMPT TO ANALYZE:\n\"\"\"{user_prompt}\"\"\""
+        full_prompt = f"{JUDGE_INSTRUCTIONS}\n\nPROMPT TO ANALYZE:\n\"\"\"{prompt}\"\"\""
 
         async with self.semaphore:
             for attempt in range(self.max_retries):
@@ -96,7 +89,7 @@ class LLMJudge:
                                 {"role": "system", "content": "You are a helpful JSON-outputting assistant."},
                                 {"role": "user", "content": full_prompt}
                             ],
-                            # Guided Decoding forces the output to follow a specific JSON schema
+                            # Guided Decoding: the LLM is forced to output a specific JSON schema
                             format=PromptEvaluation.model_json_schema(),
                             options={"temperature": 0.1}
                         ),
@@ -118,21 +111,22 @@ class LLMJudge:
 
                 except asyncio.TimeoutError:
                     if attempt == self.max_retries - 1:
-                        return {"error": "Timeout reached"}
+                        return self._error_response("Timeout reached")
                     await asyncio.sleep(2 ** attempt)
                 except Exception as e:
                     if attempt == self.max_retries - 1:
-                        return {"error": str(e)}
+                        return self._error_response(e)
                     await asyncio.sleep(2 ** attempt)
 
-    def _error_response(self, error_msg: str) -> dict:
+
+    def _error_response(self, error_msg: str | Exception) -> dict:
         """Helper method to return a clean JSON object in case of failure."""
         return {
-            "reasoning_score": 0.0,
-            "self_reflection_present": 0.0,
-            "role_assigned": 0.0,
-            "structure_specified": 0.0,
-            "examples_count": 0,
+            "reasoning_score": None,
+            "self_reflection_present": None,
+            "role_assigned": None,
+            "structure_specified": None,
+            "examples_count": None,
             "llm_reasoning": None,
             "error": error_msg
         }

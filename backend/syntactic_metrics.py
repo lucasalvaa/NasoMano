@@ -1,16 +1,13 @@
-import os
-import jdk4py
 import re
-import textstat
+from textstat import textstat
 import language_tool_python
 
-# Imposta la variabile d'ambiente JAVA_HOME puntando al Java portatile del venv
-os.environ["JAVA_HOME"] = str(jdk4py.JAVA_HOME)
-os.environ["PATH"] = str(jdk4py.JAVA_HOME / "bin") + os.pathsep + os.environ.get("PATH", "")
 
-class ContinuousMetricsEvaluator:
+class SyntacticMetricsEvaluator:
     def __init__(self):
-        # Inizializza la connessione all'istanza locale o remota di LanguageTool
+        """
+        Initialize the connection to the LanguageTool instance.
+        """
         self.lang_tool = language_tool_python.LanguageTool(
             'en-US',
             remote_server='http://127.0.0.1:8081/'
@@ -18,54 +15,42 @@ class ContinuousMetricsEvaluator:
 
     def evaluate(self, prompt: str) -> dict:
         """
-        Calcola tutte le metriche continue per un dato prompt orchestrando
-        i metodi privati della classe.
+        Calculate five syntactic metrics defined in the study by Della Porta et al.
         """
-        # Se il prompt è nullo o vuoto, restituiamo i valori massimi di default
+
         if not prompt or not isinstance(prompt, str) or prompt.strip() == "":
-            return {
-                "complexity_length_score": None,
-                "grammatical_correctness_score": None,
-                "readability_score": None,
-                "formatting_score": None,
-                "prompt_quality_score": None,
-            }
+            raise ValueError("The prompt provided is empty.")
 
-        # 6. Complexity Length
+        # Complexity Length (CL)
         cls = self.__calculate_cls(prompt)
-        CL_THRESHOLD = 0.75
 
-        # 7. Grammatical Correctness
+        # Grammatical Correctness (G)
         g_score = self.__calculate_g(prompt)
-        G_THRESHOLD = 0.9
 
-        # 8. Readability (C)
+        # Readability (C)
         c_score = self.__calculate_c(prompt)
-        # Un punteggio normalizzato < 0.5 (ovvero < 50 nel Flesch Reading Ease standard)
-        # corrisponde a un testo di difficile lettura (livello college o superiore)
-        C_THRESHOLD = 0.5
 
-        # 9. Formatting (F)
+        # Formatting (F)
         f_score = self.__calculate_f(prompt)
-        F_THRESHOLD = 0.75  # Soglia sotto la quale il prompt viene considerato mal formattato
 
-        # 10. Prompt Quality (PQS)
-        pqs_score = round((g_score + f_score + c_score) / 3, 4)
-        PQS_THRESHOLD = 0.7
+        # Prompt Quality (PQ)
+        pq_score = round((g_score + f_score + c_score) / 3, 4)
 
         return {
             "complexity_length_score": cls,
             "grammatical_correctness_score": g_score,
             "readability_score": c_score,
             "formatting_score": f_score,
-            "prompt_quality_score": round((g_score + f_score + c_score) / 3, 4)
+            "prompt_quality_score": pq_score
         }
 
     def __calculate_cls(self, prompt: str) -> float:
         """
-        Calculate the Complexity-Length Score (CLS) of a given prompt using the formula:
-        CLS = 1 - min(1, ((WC / WC_max) + (GFI / 20)) / 2)
-        Where WC: word count; WC_max: length threshold; GFI: Gunning Fog Index.
+        Calculate the **Complexity-Length Score** (CLS) of a given prompt using the formula:
+
+        *CLS* = 1 - min(1, ((*WC* / *WC_max*) + (*GFI* / 20)) / 2)
+
+        Where *WC*: word count; *WC_max*: length threshold; *GFI*: Gunning Fog Index.
         """
         if not prompt or prompt.strip() == "":
             return 1.0
@@ -83,9 +68,11 @@ class ContinuousMetricsEvaluator:
 
     def __calculate_g(self, prompt: str) -> float:
         """
-        Calculate Grammatical correctness (G) using the formula:
-        G = 1 - (n_matches / max(1, n_words))
-        Where n_matches: grammar/spelling issues; n_words: word count.
+        Calculate *Grammatical correctness* (G) of a given prompt using the formula:
+
+        *G* = 1 - (*n_matches* / max(1, *n_words*))
+
+        Where *n_matches*: grammar/spelling issues; *n_words*: word count.
         """
         if not prompt or prompt.strip() == "":
             return 1.0
@@ -100,8 +87,10 @@ class ContinuousMetricsEvaluator:
 
     def __calculate_c(self, prompt: str) -> float:
         """
-        Calculate Readability (C) using the Flesch Reading Ease score.
+        Calculate *Readability* (C) of a given prompt using the Flesch Reading Ease score.
+
         The score is normalized to a 0.0 - 1.0 range (where 1.0 is maximum readability).
+
         Standard Flesch Reading Ease can occasionally exceed 100 or drop below 0 for extreme texts,
         so we clamp the final output strictly between 0 and 1.
         """
@@ -114,7 +103,7 @@ class ContinuousMetricsEvaluator:
 
     def __calculate_f(self, prompt: str) -> float:
         """
-        Calculate Formatting (F) score as a normalized combination of
+        Calculate *Formatting* (F) score as a normalized combination of
         punctuation (40%), capitalization (40%) and layout indicators (20%).
         """
         if not prompt or prompt.strip() == "":

@@ -36,8 +36,6 @@ class SmellsDetected(BaseModel):
     reasoning_suppression: bool = False
     lack_of_self_reflection: bool = False
     role_suppression: bool = False
-    unspecified_output_structure: bool = False
-    lack_of_examples: bool = False
 
 class FixRequest(BaseModel):
     prompt: str
@@ -52,12 +50,12 @@ async def detect_smells_endpoint(request: DetectRequest):
     including metrics and identified smells.
     """
 
-    # Basic validation to avoid processing completely empty prompts
-    if not request.prompt.strip():
-        raise HTTPException(status_code=400, detail="The prompt provided is empty.")
-
-    analysis = await detector.analyze_prompt(request.prompt, continuous_metrics=False)
-    return analysis
+    try:
+        analysis = await detector.analyze_prompt(request.prompt)
+        return analysis
+    except ValueError as e:
+        # Edge case in which the prompt is empty
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/fix")
