@@ -17,8 +17,8 @@ class PromptSmellDetector:
     10. Prompt Quality
     """
 
-    def __init__(self):
-        self.llm_judge = LLMJudgeEvaluator()
+    def __init__(self, model="qwen2.5:3b"):
+        self.llm_judge = LLMJudgeEvaluator(model_name=model)
         self.syntactic_eval = SyntacticMetricsEvaluator()
 
     async def analyze_prompt(
@@ -43,8 +43,10 @@ class PromptSmellDetector:
         if not prompt or not isinstance(prompt, str) or prompt.strip() == "":
             raise ValueError("The prompt provided is empty.")
 
+        llm_reasoning = None
+
         metrics: dict = {
-            "reasoning_score": None,
+            "is_reasoning_required": None,
             "self_reflection_present": None,
             "role_assigned": None,
             "structure_specified": None,
@@ -58,9 +60,10 @@ class PromptSmellDetector:
 
         if eval_judge_metrics:
             llm_results = await self.llm_judge.evaluate(prompt)
-            metrics["reasoning_score"] = 1 if llm_results.get("is_reasoning_required") else 0
+            llm_reasoning = llm_results.get("llm_reasoning", None)
+            metrics["is_reasoning_required"] = 1 if llm_results.get("is_reasoning_required") else 0
             metrics["self_reflection_present"] = 1 if llm_results.get("self_reflection_present") else 0
-            metrics["role_assigned"] = 1 if llm_results.get("is_role_assigned") else 0
+            metrics["is_role_assigned"] = 1 if llm_results.get("is_role_assigned") else 0
             metrics["structure_specified"] = 1 if llm_results.get("structure_specified") else 0
             metrics["examples_count"] = llm_results.get("examples_count", 0)
 
@@ -83,11 +86,12 @@ class PromptSmellDetector:
             return condition(value) if value is not None else None
 
         return {
+            "llm_reasoning": llm_reasoning,
             "metrics": metrics,
             "smells_detected": {
-                "reasoning_suppression": check_smell(metrics["reasoning_score"], lambda x: x == 0.0),
+                "reasoning_suppression": check_smell(metrics["is_reasoning_required"], lambda x: x == 0.0),
                 "lack_of_self_reflection": check_smell(metrics["self_reflection_present"], lambda x: x == 0),
-                "role_suppression": check_smell(metrics["role_assigned"], lambda x: x == 0),
+                "role_suppression": check_smell(metrics["is_role_assigned"], lambda x: x == 0),
                 "unspecified_output_structure": check_smell(metrics["structure_specified"], lambda x: x == 0),
                 "lack_of_examples": check_smell(metrics["examples_count"], lambda x: x == 0),
                 "complexity_length": check_smell(metrics["complexity_length_score"], lambda x: x > CL_THRESHOLD),

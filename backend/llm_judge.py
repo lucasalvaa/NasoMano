@@ -56,7 +56,7 @@ Response: {
 
 class LLMJudgeEvaluator:
     def __init__(self,
-                 model_name="qwen2.5:3b",
+                 model_name="qwen2.5:7b",
                  base_url="http://127.0.0.1:11434",
                  concurrency_limit=50,
                  max_retries=3,
@@ -122,7 +122,7 @@ class LLMJudgeEvaluator:
     def _error_response(self, error_msg: str | Exception) -> dict:
         """Helper method to return a clean JSON object in case of failure."""
         return {
-            "reasoning_score": None,
+            "is_reasoning_required": None,
             "self_reflection_present": None,
             "role_assigned": None,
             "structure_specified": None,

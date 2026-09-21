@@ -5,7 +5,7 @@ class PromptSmellFixer:
     """
 
     def __init__(self):
-        self.ROLE_FIX = "Act as an expert software engineer."
+        self.ROLE_FIX = "Act as an experienced software engineer."
         self.REASONING_FIX = "Let's think step by step."
         self.REFLECTION_FIX = "Review your output before replying."
 
