@@ -1,17 +1,13 @@
 import re
 from textstat import textstat
-import language_tool_python
-
+from lang_tool_singleton import get_languagetool_instance
 
 class SyntacticMetricsEvaluator:
     def __init__(self):
         """
         Initialize the connection to the LanguageTool instance.
         """
-        self.lang_tool = language_tool_python.LanguageTool(
-            'en-US',
-            remote_server='http://127.0.0.1:8081/'
-        )
+        self.lang_tool = get_languagetool_instance()
 
     def evaluate(self, prompt: str) -> dict:
         """
