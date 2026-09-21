@@ -1,0 +1,29 @@
+services:
+  language_tool:
+    image: silviof/docker-languagetool
+    container_name: LanguageTool
+    ports:
+      - "8081:8010"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    restart: unless-stopped
+    entrypoint: |
+      /bin/sh -c "
+      ollama serve &
+      PID=\$\$! ;
+      sleep 5 ;
+      echo 'Downloading qwen2.5:3b...' ;
+      ollama pull qwen2.5:3b ;
+      wait \$\$PID ;
+      "
+
+volumes:
+  ollama_storage:
+    name: ollama_storage
