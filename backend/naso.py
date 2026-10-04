@@ -1,32 +1,77 @@
+from __future__ import annotations
+
+from typing import Callable, TypedDict
+
 from llm_judge import LLMJudgeEvaluator
 from syntactic_metrics import SyntacticMetricsEvaluator
 
 
-class PromptSmellDetector:
-    """
-    Detect the presence of the following ten “prompt smells” in English-Language prompts:
-    01. Reasoning Suppression
-    02. Lack of Self-Reflection
-    03. Role Suppression
-    04. Unspecified Output Structure
-    05. Lack of Examples
-    06. Complexity-Length
-    07. Grammatical Correctness
-    08. Formatting
-    09. Readability
-    10. Prompt Quality
-    """
+COMPLEXITY_LENGTH_THRESHOLD = 0.75
+GRAMMATICAL_CORRECTNESS_THRESHOLD = 0.9
+READABILITY_THRESHOLD = 0.6
+FORMATTING_THRESHOLD = 0.75
+PROMPT_QUALITY_THRESHOLD = 0.7
 
-    def __init__(self, model="qwen2.5:3b"):
+
+class Metrics(TypedDict):
+    is_reasoning_required: int | None
+    self_reflection_present: int | None
+    role_assigned: int | None
+    structure_specified: int | None
+    examples_count: int | None
+    complexity_length_score: float | None
+    grammatical_correctness_score: float | None
+    readability_score: float | None
+    formatting_score: float | None
+    prompt_quality_score: float | None
+
+
+class SmellsDetected(TypedDict):
+    reasoning_suppression: bool | None
+    lack_of_self_reflection: bool | None
+    role_suppression: bool | None
+    unspecified_output_structure: bool | None
+    lack_of_examples: bool | None
+    complexity_length: bool | None
+    poor_grammar: bool | None
+    poor_readability: bool | None
+    poor_formatting: bool | None
+    low_quality: bool | None
+
+
+class DetectionResult(TypedDict):
+    llm_reasoning: str | None
+    metrics: Metrics
+    smells_detected: SmellsDetected
+
+
+# Associate each metric to the pair (smell key, predicate that detects it)
+# To add or remove a smell, simply edit a line here
+_SMELL_RULES: dict[str, tuple[str, Callable[[float], bool]]] = {
+    "is_reasoning_required": ("reasoning_suppression", lambda v: v == 0),
+    "self_reflection_present": ("lack_of_self_reflection", lambda v: v == 0),
+    "role_assigned": ("role_suppression", lambda v: v == 0),
+    "structure_specified": ("unspecified_output_structure", lambda v: v == 0),
+    "examples_count": ("lack_of_examples", lambda v: v == 0),
+    "complexity_length_score": ("complexity_length", lambda v: v > COMPLEXITY_LENGTH_THRESHOLD),
+    "grammatical_correctness_score": ("poor_grammar", lambda v: v < GRAMMATICAL_CORRECTNESS_THRESHOLD),
+    "readability_score": ("poor_readability", lambda v: v < READABILITY_THRESHOLD),
+    "formatting_score": ("poor_formatting", lambda v: v < FORMATTING_THRESHOLD),
+    "prompt_quality_score": ("low_quality", lambda v: v < PROMPT_QUALITY_THRESHOLD),
+}
+
+
+class Naso:
+    def __init__(self, model: str = "qwen2.5:3b") -> None:
         self.llm_judge = LLMJudgeEvaluator(model_name=model)
         self.syntactic_eval = SyntacticMetricsEvaluator()
 
-    async def analyze_prompt(
-            self,
-            prompt: str,
-            eval_judge_metrics: bool = True,
-            eval_syntactic_metrics: bool = True
-    ) -> dict:
+    async def detect_smells(
+        self,
+        prompt: str,
+        eval_judge_metrics: bool = True,
+        eval_syntactic_metrics: bool = True,
+    ) -> DetectionResult:
         """
         Analyze an individual prompt and return metrics and the presence of smells.
 
@@ -38,14 +83,32 @@ class PromptSmellDetector:
         Returns:
             metrics (dict): Dictionary containing the ten metrics reported by the evaluator.
 
-            If any of the two flags is set to false, the return value for those five smells is "None".
+        Raises:
+            ValueError: if the prompt provided is empty or an invalid string.
         """
-        if not prompt or not isinstance(prompt, str) or prompt.strip() == "":
+        if not prompt or not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("The prompt provided is empty.")
 
-        llm_reasoning = None
+        metrics: Metrics = self._empty_metrics()
+        llm_reasoning: str | None = None
 
-        metrics: dict = {
+        if eval_judge_metrics:
+            llm_reasoning, llm_metrics = await self._evaluate_llm_metrics(prompt)
+            metrics.update(llm_metrics)
+
+        if eval_syntactic_metrics:
+            syntactic_metrics = await self._evaluate_syntactic_metrics(prompt)
+            metrics.update(syntactic_metrics)
+
+        return {
+            "llm_reasoning": llm_reasoning,
+            "metrics": metrics,
+            "smells_detected": self._detect_smells(metrics),
+        }
+
+    @staticmethod
+    def _empty_metrics() -> Metrics:
+        return {
             "is_reasoning_required": None,
             "self_reflection_present": None,
             "role_assigned": None,
@@ -55,49 +118,35 @@ class PromptSmellDetector:
             "grammatical_correctness_score": None,
             "readability_score": None,
             "formatting_score": None,
-            "prompt_quality_score": None
+            "prompt_quality_score": None,
         }
 
-        if eval_judge_metrics:
-            llm_results = await self.llm_judge.evaluate(prompt)
-            llm_reasoning = llm_results.get("llm_reasoning", None)
-            metrics["is_reasoning_required"] = 1 if llm_results.get("is_reasoning_required") else 0
-            metrics["self_reflection_present"] = 1 if llm_results.get("self_reflection_present") else 0
-            metrics["is_role_assigned"] = 1 if llm_results.get("is_role_assigned") else 0
-            metrics["structure_specified"] = 1 if llm_results.get("structure_specified") else 0
-            metrics["examples_count"] = llm_results.get("examples_count", 0)
+    async def _evaluate_llm_metrics(self, prompt: str) -> tuple[str | None, dict]:
+        llm_results = await self.llm_judge.evaluate(prompt)
+        if llm_results is None:
+            return None, {}
 
-        if eval_syntactic_metrics:
-            syntactic_eval_results = self.syntactic_eval.evaluate(prompt)
-            metrics["complexity_length_score"] = syntactic_eval_results.get("complexity_length_score", None)
-            metrics["grammatical_correctness_score"] = syntactic_eval_results.get("grammatical_correctness_score", None)
-            metrics["readability_score"] = syntactic_eval_results.get("readability_score", None)
-            metrics["formatting_score"] = syntactic_eval_results.get("formatting_score", None)
-            metrics["prompt_quality_score"] = syntactic_eval_results.get("prompt_quality_score", None)
+        return llm_results.get("llm_reasoning"), {
+            "is_reasoning_required": int(bool(llm_results.get("is_reasoning_required"))),
+            "self_reflection_present": int(bool(llm_results.get("self_reflection_present"))),
+            "role_assigned": int(bool(llm_results.get("is_role_assigned"))),
+            "structure_specified": int(bool(llm_results.get("structure_specified"))),
+            "examples_count": llm_results.get("examples_count", 0),
+        }
 
-        # The thresholds for determining whether a syntactic prompt smell is present
-        CL_THRESHOLD = 0.75  # Complexity Length
-        G_THRESHOLD = 0.9  # Grammatical Correctness
-        C_THRESHOLD = 0.6  # Readability
-        F_THRESHOLD = 0.75  # Formatting
-        PQ_THRESHOLD = 0.7  # Prompt Quality
-
-        def check_smell(value, condition):
-            return condition(value) if value is not None else None
-
+    async def _evaluate_syntactic_metrics(self, prompt: str) -> dict:
+        syntactic_results = await self.syntactic_eval.evaluate(prompt)
         return {
-            "llm_reasoning": llm_reasoning,
-            "metrics": metrics,
-            "smells_detected": {
-                "reasoning_suppression": check_smell(metrics["is_reasoning_required"], lambda x: x == 0.0),
-                "lack_of_self_reflection": check_smell(metrics["self_reflection_present"], lambda x: x == 0),
-                "role_suppression": check_smell(metrics["is_role_assigned"], lambda x: x == 0),
-                "unspecified_output_structure": check_smell(metrics["structure_specified"], lambda x: x == 0),
-                "lack_of_examples": check_smell(metrics["examples_count"], lambda x: x == 0),
-                "complexity_length": check_smell(metrics["complexity_length_score"], lambda x: x > CL_THRESHOLD),
-                "poor_grammar": check_smell(metrics["grammatical_correctness_score"], lambda x: x < G_THRESHOLD),
-                "poor_readability": check_smell(metrics["readability_score"], lambda x: x < C_THRESHOLD),
-                "poor_formatting": check_smell(metrics["formatting_score"], lambda x: x < F_THRESHOLD),
-                "low_quality": check_smell(metrics["prompt_quality_score"], lambda x: x < PQ_THRESHOLD),
-            }
+            "complexity_length_score": syntactic_results.get("complexity_length_score"),
+            "grammatical_correctness_score": syntactic_results.get("grammatical_correctness_score"),
+            "readability_score": syntactic_results.get("readability_score"),
+            "formatting_score": syntactic_results.get("formatting_score"),
+            "prompt_quality_score": syntactic_results.get("prompt_quality_score"),
+        }
+
+    @staticmethod
+    def _detect_smells(metrics: Metrics) -> SmellsDetected:
+        return {
+            smell_key: (predicate(metrics[metric_key]) if metrics[metric_key] is not None else None)
+            for metric_key, (smell_key, predicate) in _SMELL_RULES.items()
         }
