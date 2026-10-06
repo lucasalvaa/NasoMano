@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Callable, TypedDict
 
+# To build the docker image
+# from .llm_judge import LLMJudgeEvaluator
+# from .syntactic_metrics import SyntacticMetricsEvaluator
+
 from llm_judge import LLMJudgeEvaluator
 from syntactic_metrics import SyntacticMetricsEvaluator
 
@@ -103,7 +107,7 @@ class Naso:
         return {
             "llm_reasoning": llm_reasoning,
             "metrics": metrics,
-            "smells_detected": self._detect_smells(metrics),
+            "smells_detected": self._flag_smells(metrics),
         }
 
     @staticmethod
@@ -145,7 +149,7 @@ class Naso:
         }
 
     @staticmethod
-    def _detect_smells(metrics: Metrics) -> SmellsDetected:
+    def _flag_smells(metrics: Metrics) -> SmellsDetected:
         return {
             smell_key: (predicate(metrics[metric_key]) if metrics[metric_key] is not None else None)
             for metric_key, (smell_key, predicate) in _SMELL_RULES.items()

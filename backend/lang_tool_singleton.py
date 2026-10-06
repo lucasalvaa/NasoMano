@@ -1,3 +1,4 @@
+import os
 from threading import Lock, Semaphore
 import language_tool_python
 
@@ -10,6 +11,8 @@ A semaphore has also been added to protect the LanguageTool Docker container
 from an excessive number of simultaneous calls when the NasoMano API receives
 hundreds of requests at the same time.
 """
+
+DEFAULT_LANGUAGETOOL_URL = "http://127.0.0.1:8081/"
 
 class SingletonMeta(type):
     _instances: dict[type, object] = {}
@@ -24,10 +27,17 @@ class SingletonMeta(type):
 
 
 class LanguageToolSingleton(metaclass=SingletonMeta):
-    def __init__(self, language: str = "en-US", concurrency_limit: int = 20) -> None:
+    def __init__(
+        self,
+        language: str = "en-US",
+        concurrency_limit: int = 20,
+        remote_server: str | None = None,
+    ) -> None:
+        resolved_remote_server = remote_server or os.environ.get(
+            "LANGUAGETOOL_BASE_URL", DEFAULT_LANGUAGETOOL_URL
+        )
         self.tool = language_tool_python.LanguageTool(
-            language,
-            remote_server='http://127.0.0.1:8081/'
+            language, remote_server=resolved_remote_server
         )
         self.semaphore = Semaphore(concurrency_limit)
 

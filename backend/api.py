@@ -1,7 +1,11 @@
 import uvicorn
 
+# To build the docker image
+# from .naso import Naso
+# from .mano import Mano
 from naso import Naso
 from mano import Mano
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel

@@ -7,6 +7,8 @@ from typing import TypedDict
 
 from textstat import textstat
 
+# To build the docker image
+# from .lang_tool_singleton import get_languagetool_instance
 from lang_tool_singleton import get_languagetool_instance
 
 logger = logging.getLogger(__name__)

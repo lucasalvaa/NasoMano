@@ -17,12 +17,25 @@ services:
     entrypoint: |
       /bin/sh -c "
       ollama serve &
-      PID=\$\$! ;
+      PID=$$! ;
       sleep 5 ;
       echo 'Downloading qwen2.5:3b...' ;
       ollama pull qwen2.5:3b ;
-      wait \$\$PID ;
+      wait $$PID ;
       "
+
+  nasomano_api:
+    image: lucasalvaa/nasomano-api:latest
+    container_name: nasomano-api
+    ports:
+      - "8000:8000"
+    environment:
+      - LANGUAGETOOL_BASE_URL=http://language_tool:8010/
+      - OLLAMA_BASE_URL=http://ollama:11434/
+    depends_on:
+      - language_tool
+      - ollama
+    restart: unless-stopped
 
 volumes:
   ollama_storage:
